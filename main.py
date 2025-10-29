@@ -5,6 +5,9 @@ import os
 import asyncio 
 from flask import Flask
 from threading import Thread
+# NEU: Imports für Gemini
+from google import genai
+from google.genai import types
 
 # --- Keep-Alive Funktion für Railway ---
 def run_flask():
@@ -23,9 +26,19 @@ def keep_alive():
 # --- Ende Keep-Alive Funktion ---
 
 
+# --- Gemini API Initialisierung ---
+try:
+    gemini_client = genai.Client()
+except Exception as e:
+    print(f"❌ Gemini Client konnte nicht initialisiert werden (Prüfen Sie den Key): {e}")
+    gemini_client = None
+
+# Temporäre In-Memory Speicherung für Gemini Chats (Kontext pro Benutzer)
+active_chats = {}
+
 # 1. Intents setzen
 intents = discord.Intents.default()
-intents.members = True # Wichtig für Kick/Ban, muss im Developer Portal aktiviert sein!
+intents.members = True 
 intents.message_content = True 
 
 class DiscordBot(discord.Client):
@@ -98,7 +111,7 @@ async def ban_member(interaction: discord.Interaction, member: discord.Member, r
 @app_commands.describe(text="The message to spam", count="How many times (max 20)")
 @app_commands.default_permissions(manage_messages=True)
 async def spam_message(interaction: discord.Interaction, text: str, count: app_commands.Range[int, 1, 20]):
-    await interaction.response.send_message(f"💬 Spammen von '{text}' {count} Mal gestartet...", ephemeral=True) # Ephemeral, damit nur der Moderator die Startmeldung sieht
+    await interaction.response.send_message(f"💬 Spammen von '{text}' {count} Mal gestartet...", ephemeral=True) 
 
     for _ in range(count):
         await interaction.channel.send(text)
@@ -106,6 +119,50 @@ async def spam_message(interaction: discord.Interaction, text: str, count: app_c
 
     await interaction.channel.send("✅ Spam-Befehl abgeschlossen.")
 
+# --- Gemini AI Befehl ---
+@bot.tree.command(name="gemini", description="Ask Gemini a question or continue a conversation.")
+@app_commands.describe(prompt="Your question or message to the AI")
+async def gemini_chat(interaction: discord.Interaction, prompt: str):
+    await interaction.response.defer() 
+
+    if not gemini_client:
+        await interaction.followup.send("❌ Gemini-Chat ist nicht verfügbar. Bitte prüfen Sie den GEMINI_API_KEY.")
+        return
+
+    user_id = interaction.user.id
+    
+    if user_id not in active_chats:
+        config = types.GenerateContentConfig(
+            system_instruction="Du bist ein freundlicher, hilfreicher und humorvoller Discord-Bot namens AliBan. Halte deine Antworten kurz und prägnant."
+        )
+        
+        active_chats[user_id] = gemini_client.chats.create(
+            model='gemini-2.5-flash',
+            config=config,
+        )
+        
+    chat = active_chats[user_id]
+    
+    try:
+        response = chat.send_message(prompt)
+        ai_response = response.text if len(response.text) <= 2000 else response.text[:1950] + "..."
+
+        embed = discord.Embed(
+            title=f"🤖 Gemini-Antwort für {interaction.user.display_name}",
+            description=ai_response,
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Ihre Frage:", value=f"*{prompt[:100]}...*" if len(prompt) > 100 else prompt, inline=False)
+        embed.set_footer(text="Geben Sie /gemini erneut ein, um die Unterhaltung fortzusetzen.")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Fehler bei der Gemini-Anfrage: {str(e)}")
+        # Optional: Lösche den Chat bei einem Fehler
+        del active_chats[user_id]
+
+# --- Media-Befehle ---
 
 # Command: Send an image from URL
 @bot.tree.command(name="image", description="Send an image from a URL")
@@ -129,7 +186,6 @@ async def send_gif(interaction: discord.Interaction, search: str = "random"):
         await interaction.followup.send("❌ GIF search ist nicht konfiguriert. Bitte fügen Sie einen TENOR_API_KEY in Railway hinzu.")
         return
 
-    # Tenor API v2 Endpunkt
     tenor_url = f"https://tenor.googleapis.com/v2/search?q={search}&key={tenor_key}&limit=1&random=true"
 
     try:
@@ -192,7 +248,7 @@ async def send_dog(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching dog picture: {str(e)}")
 
-# --- TEMPORÄRER SYNCHRONISATIONS-BEFEHL (Entfernen, sobald /spam und /gif sichtbar sind) ---
+# --- TEMPORÄRER SYNCHRONISATIONS-BEFEHL ---
 @bot.tree.command(name="sync", description="Syncs all global commands immediately (Owner only).")
 async def sync_commands(interaction: discord.Interaction):
     # BITTE HIER IHRE EIGENE DISCORD BENUTZER-ID (als ganze Zahl) EINTRAGEN
@@ -203,20 +259,16 @@ async def sync_commands(interaction: discord.Interaction):
         return
 
     await interaction.response.send_message("⚙️ Starte manuelle Synchronisation der Slash-Befehle...", ephemeral=True)
-    
     await bot.tree.sync() 
-    
     await interaction.followup.send("✅ Alle Befehle wurden erfolgreich synchronisiert!", ephemeral=True)
 # --- ENDE DES TEMPORÄREN BEFEHLS ---
 
 
 # Run the bot
 if __name__ == "__main__":
-    # Get token from environment variable
     token = os.getenv('DISCORD_BOT_TOKEN')
     if not token:
         print("❌ Error: DISCORD_BOT_TOKEN environment variable not set!")
-        print("Please set your Discord bot token in the Secrets tab.")
         exit(1)
     
     # 2. Startet den Keep-Alive-Server im Hintergrund (Wichtig für Railway)
