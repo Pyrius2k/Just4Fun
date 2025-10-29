@@ -23,9 +23,9 @@ def keep_alive():
 # --- Ende Keep-Alive Funktion ---
 
 
-# 1. Intents mit 'members' erweitern
+# 1. Intents setzen
 intents = discord.Intents.default()
-intents.members = True # WICHTIG: Erlaubt dem Bot, auf Mitgliederinformationen zuzugreifen
+intents.members = True # Wichtig für Kick/Ban, muss im Developer Portal aktiviert sein!
 intents.message_content = True 
 
 class DiscordBot(discord.Client):
@@ -34,8 +34,7 @@ class DiscordBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Sync commands with Discord
-        # Hinweis: Beim ersten Start kann der /sync Befehl nötig sein, bevor die anderen Befehle sichtbar werden.
+        # Synchronisiert Befehle beim Start (einmalig)
         await self.tree.sync()
         print("Commands synced!")
 
@@ -50,14 +49,12 @@ async def on_ready():
 # Command: Send a hello message
 @bot.tree.command(name="hello", description="Send a friendly greeting message")
 async def hello(interaction: discord.Interaction):
-    """Send a hello message"""
     await interaction.response.send_message("👋 Hello! I'm your Discord bot, ready to send messages and images!")
 
 # Command: Send a message
 @bot.tree.command(name="message", description="Send a custom message")
 @app_commands.describe(text="The message text to send")
 async def send_message(interaction: discord.Interaction, text: str):
-    """Send a custom text message"""
     await interaction.response.send_message(f"📝 {text}")
 
 # --- Moderations-Befehle ---
@@ -67,50 +64,45 @@ async def send_message(interaction: discord.Interaction, text: str):
 @app_commands.describe(member="The member to kick", reason="The reason for the kick")
 @app_commands.default_permissions(kick_members=True)
 async def kick_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-    """Kicks a member from the server (requires 'Kick Members' permission)"""
+    await interaction.response.defer(ephemeral=True) 
     
-    # Der Bot muss in der Rollen-Hierarchie höher sein als das Ziel
     if interaction.guild.me.top_role <= member.top_role:
-        await interaction.response.send_message(f"❌ Ich kann **{member.display_name}** nicht kicken, da deren Rolle höher oder gleich meiner eigenen ist.")
+        await interaction.followup.send(f"❌ Ich kann **{member.display_name}** nicht kicken, da deren Rolle höher oder gleich meiner eigenen ist.")
         return
     
     try:
         await member.kick(reason=f"Kick durch {interaction.user.name} | Grund: {reason}")
-        await interaction.response.send_message(f"✅ **{member.display_name}** wurde gekickt. Grund: *{reason}*")
+        await interaction.followup.send(f"✅ **{member.display_name}** wurde gekickt. Grund: *{reason}*")
     except discord.Forbidden:
-        await interaction.response.send_message("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
+        await interaction.followup.send("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
 
 # Command: Ban a member
 @bot.tree.command(name="ban", description="Bans a member from the server")
 @app_commands.describe(member="The member to ban", reason="The reason for the ban")
 @app_commands.default_permissions(ban_members=True)
 async def ban_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
-    """Bans a member from the server (requires 'Ban Members' permission)"""
+    await interaction.response.defer(ephemeral=True) 
     
-    # Der Bot muss in der Rollen-Hierarchie höher sein als das Ziel
     if interaction.guild.me.top_role <= member.top_role:
-        await interaction.response.send_message(f"❌ Ich kann **{member.display_name}** nicht bannen, da deren Rolle höher oder gleich meiner eigenen ist.")
+        await interaction.followup.send(f"❌ Ich kann **{member.display_name}** nicht bannen, da deren Rolle höher oder gleich meiner eigenen ist.")
         return
         
     try:
         await member.ban(reason=f"Ban durch {interaction.user.name} | Grund: {reason}")
-        await interaction.response.send_message(f"✅ **{member.display_name}** wurde gebannt. Grund: *{reason}*")
+        await interaction.followup.send(f"✅ **{member.display_name}** wurde gebannt. Grund: *{reason}*")
     except discord.Forbidden:
-        await interaction.response.send_message("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
+        await interaction.followup.send("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
 
 # Command: Send a message multiple times (Spam)
 @bot.tree.command(name="spam", description="Sends a message multiple times (max 20)")
 @app_commands.describe(text="The message to spam", count="How many times (max 20)")
-@app_commands.default_permissions(manage_messages=True) # Nur für Moderatoren
+@app_commands.default_permissions(manage_messages=True)
 async def spam_message(interaction: discord.Interaction, text: str, count: app_commands.Range[int, 1, 20]):
-    """Sends a message multiple times with a safety delay."""
-    
-    await interaction.response.send_message(f"💬 Spammen von '{text}' {count} Mal gestartet...")
+    await interaction.response.send_message(f"💬 Spammen von '{text}' {count} Mal gestartet...", ephemeral=True) # Ephemeral, damit nur der Moderator die Startmeldung sieht
 
-    # Rate-Limit-Schutz: Begrenzen auf 20 und bauen eine Verzögerung ein
     for _ in range(count):
         await interaction.channel.send(text)
-        await asyncio.sleep(1.0) # Warten Sie eine Sekunde zwischen jeder Nachricht
+        await asyncio.sleep(1.0) 
 
     await interaction.channel.send("✅ Spam-Befehl abgeschlossen.")
 
@@ -119,8 +111,6 @@ async def spam_message(interaction: discord.Interaction, text: str, count: app_c
 @bot.tree.command(name="image", description="Send an image from a URL")
 @app_commands.describe(url="The image URL to send")
 async def send_image(interaction: discord.Interaction, url: str):
-    """Send an image from a URL"""
-    # Create an embed with the image
     embed = discord.Embed(
         title="🖼️ Here's your image!",
         color=discord.Color.blue()
@@ -128,10 +118,39 @@ async def send_image(interaction: discord.Interaction, url: str):
     embed.set_image(url=url)
     await interaction.response.send_message(embed=embed)
 
+# Command: Send a GIF (Tenor API Key erforderlich!)
+@bot.tree.command(name="gif", description="Send a GIF")
+@app_commands.describe(search="Search term for the GIF (e.g., 'funny cat', 'dance')")
+async def send_gif(interaction: discord.Interaction, search: str = "random"):
+    await interaction.response.defer()
+
+    tenor_key = os.getenv('TENOR_API_KEY')
+    if not tenor_key:
+        await interaction.followup.send("❌ GIF search ist nicht konfiguriert. Bitte fügen Sie einen TENOR_API_KEY in Railway hinzu.")
+        return
+
+    # Tenor API v2 Endpunkt
+    tenor_url = f"https://tenor.googleapis.com/v2/search?q={search}&key={tenor_key}&limit=1&random=true"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(tenor_url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get('results'):
+                        gif_url = data['results'][0]['media_formats']['gif']['url']
+                        await interaction.followup.send(f"🎬 Hier ist ein GIF für '{search}':\n{gif_url}")
+                    else:
+                        await interaction.followup.send(f"❌ Kein GIF gefunden für '{search}'. Versuchen Sie einen anderen Suchbegriff!")
+                else:
+                    await interaction.followup.send("❌ Fehler beim Abrufen des GIF. Status: " + str(response.status))
+    except Exception as e:
+        await interaction.followup.send(f"❌ Fehler beim Abrufen des GIF: {str(e)}")
+
+
 # Command: Send a random cat picture
 @bot.tree.command(name="cat", description="Send a random cat picture")
 async def send_cat(interaction: discord.Interaction):
-    """Send a random cat picture from an API"""
     await interaction.response.defer()
 
     try:
@@ -141,11 +160,7 @@ async def send_cat(interaction: discord.Interaction):
                     data = await response.json()
                     if data and len(data) > 0:
                         cat_url = data[0]['url']
-
-                        embed = discord.Embed(
-                            title="🐱 Random Cat!",
-                            color=discord.Color.orange()
-                        )
+                        embed = discord.Embed(title="🐱 Random Cat!", color=discord.Color.orange())
                         embed.set_image(url=cat_url)
                         await interaction.followup.send(embed=embed)
                     else:
@@ -158,7 +173,6 @@ async def send_cat(interaction: discord.Interaction):
 # Command: Send a random dog picture
 @bot.tree.command(name="dog", description="Send a random dog picture")
 async def send_dog(interaction: discord.Interaction):
-    """Send a random dog picture from an API"""
     await interaction.response.defer()
 
     try:
@@ -168,11 +182,7 @@ async def send_dog(interaction: discord.Interaction):
                     data = await response.json()
                     if data and data.get('message'):
                         dog_url = data['message']
-
-                        embed = discord.Embed(
-                            title="🐶 Random Dog!",
-                            color=discord.Color.green()
-                        )
+                        embed = discord.Embed(title="🐶 Random Dog!", color=discord.Color.green())
                         embed.set_image(url=dog_url)
                         await interaction.followup.send(embed=embed)
                     else:
@@ -182,11 +192,11 @@ async def send_dog(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching dog picture: {str(e)}")
 
-# --- TEMPORÄRER SYNCHRONISATIONS-BEFEHL (Entfernen, sobald /spam sichtbar ist) ---
+# --- TEMPORÄRER SYNCHRONISATIONS-BEFEHL (Entfernen, sobald /spam und /gif sichtbar sind) ---
 @bot.tree.command(name="sync", description="Syncs all global commands immediately (Owner only).")
 async def sync_commands(interaction: discord.Interaction):
-    # BITTE ERSETZEN SIE DIES MIT IHRER EIGENEN DISCORD BENUTZER-ID (als ganze Zahl)
-    MEINE_BENUTZER_ID = IHRE_BENUTZER_ID_HIER 
+    # BITTE HIER IHRE EIGENE DISCORD BENUTZER-ID (als ganze Zahl) EINTRAGEN
+    MEINE_BENUTZER_ID = IHRE_BENUTZER_ID_HIER
     
     if interaction.user.id != MEINE_BENUTZER_ID: 
         await interaction.response.send_message("❌ Nur der Bot-Besitzer kann diesen Befehl ausführen.", ephemeral=True)
@@ -209,8 +219,8 @@ if __name__ == "__main__":
         print("Please set your Discord bot token in the Secrets tab.")
         exit(1)
     
-    # Startet den Keep-Alive-Server im Hintergrund
+    # 2. Startet den Keep-Alive-Server im Hintergrund (Wichtig für Railway)
     keep_alive() 
     
-    # Startet den Discord-Bot
+    # 3. Startet den Discord-Bot
     bot.run(token)
