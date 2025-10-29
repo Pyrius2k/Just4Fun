@@ -2,9 +2,12 @@ import discord
 from discord import app_commands
 import aiohttp
 import os
+import asyncio # Neu: Für den Spam-Befehl benötigt
 
-# Create bot instance with necessary intents
+# 1. Intents mit 'members' erweitern
 intents = discord.Intents.default()
+intents.members = True 
+intents.message_content = True # Für einige Funktionen hilfreich, sicherheitshalber belassen
 
 class DiscordBot(discord.Client):
     def __init__(self):
@@ -28,7 +31,7 @@ async def on_ready():
 @bot.tree.command(name="hello", description="Send a friendly greeting message")
 async def hello(interaction: discord.Interaction):
     """Send a hello message"""
-    await interaction.response.send_message("👋 Hello! I'm your Discord bot, ready to send messages, GIFs, and images!")
+    await interaction.response.send_message("👋 Hello! I'm your Discord bot, ready to send messages and images!")
 
 # Command: Send a message
 @bot.tree.command(name="message", description="Send a custom message")
@@ -37,36 +40,62 @@ async def send_message(interaction: discord.Interaction, text: str):
     """Send a custom text message"""
     await interaction.response.send_message(f"📝 {text}")
 
-# Command: Send a GIF
-@bot.tree.command(name="gif", description="Send a GIF")
-@app_commands.describe(search="Search term for the GIF (e.g., 'funny cat', 'dance')")
-async def send_gif(interaction: discord.Interaction, search: str = "random"):
-    """Send a GIF using Tenor API"""
-    await interaction.response.defer()
+# --- Moderations-Befehle ---
+
+# Command: Kick a member
+@bot.tree.command(name="kick", description="Kicks a member from the server")
+@app_commands.describe(member="The member to kick", reason="The reason for the kick")
+@app_commands.default_permissions(kick_members=True) # Stellt sicher, dass nur Berechtigte den Befehl sehen/nutzen
+async def kick_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
+    """Kicks a member from the server (requires 'Kick Members' permission)"""
     
-    tenor_key = os.getenv('TENOR_API_KEY')
-    if not tenor_key:
-        await interaction.followup.send("❌ GIF search is not configured. To enable this feature, add a TENOR_API_KEY to your secrets.\nGet a free API key at https://developers.google.com/tenor/guides/quickstart")
+    # Der Bot muss in der Rollen-Hierarchie höher sein als das Ziel
+    if interaction.guild.me.top_role <= member.top_role:
+        await interaction.response.send_message(f"❌ Ich kann **{member.display_name}** nicht kicken, da deren Rolle höher oder gleich meiner eigenen ist.")
         return
     
-    tenor_url = f"https://tenor.googleapis.com/v2/search?q={search}&key={tenor_key}&limit=1&random=true"
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(tenor_url) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('results'):
-                        gif_url = data['results'][0]['media_formats']['gif']['url']
-                        await interaction.followup.send(f"🎬 Here's a GIF for '{search}':\n{gif_url}")
-                    else:
-                        await interaction.followup.send(f"❌ No GIF found for '{search}'. Try another search term!")
-                else:
-                    await interaction.followup.send("❌ Failed to fetch GIF. Please try again.")
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error fetching GIF: {str(e)}")
+        await member.kick(reason=f"Kick durch {interaction.user.name} | Grund: {reason}")
+        await interaction.response.send_message(f"✅ **{member.display_name}** wurde gekickt. Grund: *{reason}*")
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
 
-# Command: Send an image from URL
+# Command: Ban a member
+@bot.tree.command(name="ban", description="Bans a member from the server")
+@app_commands.describe(member="The member to ban", reason="The reason for the ban")
+@app_commands.default_permissions(ban_members=True) # Stellt sicher, dass nur Berechtigte den Befehl sehen/nutzen
+async def ban_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
+    """Bans a member from the server (requires 'Ban Members' permission)"""
+    
+    # Der Bot muss in der Rollen-Hierarchie höher sein als das Ziel
+    if interaction.guild.me.top_role <= member.top_role:
+        await interaction.response.send_message(f"❌ Ich kann **{member.display_name}** nicht bannen, da deren Rolle höher oder gleich meiner eigenen ist.")
+        return
+        
+    try:
+        await member.ban(reason=f"Ban durch {interaction.user.name} | Grund: {reason}")
+        await interaction.response.send_message(f"✅ **{member.display_name}** wurde gebannt. Grund: *{reason}*")
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Ich habe nicht die notwendigen Berechtigungen, um dies zu tun. Bitte überprüfe meine Rollen.")
+
+# Command: Send a message multiple times (Spam)
+@bot.tree.command(name="spam", description="Sends a message multiple times (max 20)")
+@app_commands.describe(text="The message to spam", count="How many times (max 20)")
+@app_commands.default_permissions(manage_messages=True) # Nur für Moderatoren
+async def spam_message(interaction: discord.Interaction, text: str, count: app_commands.Range[int, 1, 20]):
+    """Sends a message multiple times with a safety delay."""
+    
+    await interaction.response.send_message(f"💬 Spammen von '{text}' {count} Mal gestartet...")
+
+    # Rate-Limit-Schutz: Begrenzen auf 20 und bauen eine Verzögerung ein
+    for _ in range(count):
+        await interaction.channel.send(text)
+        await asyncio.sleep(1.0) # Warten Sie eine Sekunde zwischen jeder Nachricht
+
+    await interaction.channel.send("✅ Spam-Befehl abgeschlossen.")
+
+
+# Command: Send an image from URL (unverändert)
 @bot.tree.command(name="image", description="Send an image from a URL")
 @app_commands.describe(url="The image URL to send")
 async def send_image(interaction: discord.Interaction, url: str):
@@ -79,12 +108,12 @@ async def send_image(interaction: discord.Interaction, url: str):
     embed.set_image(url=url)
     await interaction.response.send_message(embed=embed)
 
-# Command: Send a random cat picture
+# Command: Send a random cat picture (unverändert)
 @bot.tree.command(name="cat", description="Send a random cat picture")
 async def send_cat(interaction: discord.Interaction):
     """Send a random cat picture from an API"""
     await interaction.response.defer()
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://api.thecatapi.com/v1/images/search") as response:
@@ -92,7 +121,7 @@ async def send_cat(interaction: discord.Interaction):
                     data = await response.json()
                     if data and len(data) > 0:
                         cat_url = data[0]['url']
-                        
+
                         embed = discord.Embed(
                             title="🐱 Random Cat!",
                             color=discord.Color.orange()
@@ -106,12 +135,12 @@ async def send_cat(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching cat picture: {str(e)}")
 
-# Command: Send a random dog picture
+# Command: Send a random dog picture (unverändert)
 @bot.tree.command(name="dog", description="Send a random dog picture")
 async def send_dog(interaction: discord.Interaction):
     """Send a random dog picture from an API"""
     await interaction.response.defer()
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://dog.ceo/api/breeds/image/random") as response:
@@ -119,7 +148,7 @@ async def send_dog(interaction: discord.Interaction):
                     data = await response.json()
                     if data and data.get('message'):
                         dog_url = data['message']
-                        
+
                         embed = discord.Embed(
                             title="🐶 Random Dog!",
                             color=discord.Color.green()
@@ -133,7 +162,7 @@ async def send_dog(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching dog picture: {str(e)}")
 
-# Run the bot
+# Run the bot (unverändert)
 if __name__ == "__main__":
     # Get token from environment variable
     token = os.getenv('DISCORD_BOT_TOKEN')
