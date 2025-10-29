@@ -2,12 +2,31 @@ import discord
 from discord import app_commands
 import aiohttp
 import os
-import asyncio # Neu: Für den Spam-Befehl benötigt
+import asyncio 
+from flask import Flask
+from threading import Thread
+
+# --- Keep-Alive Funktion für Railway ---
+def run_flask():
+    app = Flask('')
+    @app.route('/')
+    def home():
+        return "Bot is awake and hosted by Railway!"
+    # Railway stellt den Port über eine Umgebungsvariable bereit
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    """Startet den Flask-Server in einem separaten Thread, um den Bot 24/7 online zu halten."""
+    t = Thread(target=run_flask)
+    t.start()
+# --- Ende Keep-Alive Funktion ---
+
 
 # 1. Intents mit 'members' erweitern
 intents = discord.Intents.default()
-intents.members = True 
-intents.message_content = True # Für einige Funktionen hilfreich, sicherheitshalber belassen
+intents.members = True # WICHTIG: Erlaubt dem Bot, auf Mitgliederinformationen zuzugreifen
+intents.message_content = True 
 
 class DiscordBot(discord.Client):
     def __init__(self):
@@ -16,6 +35,7 @@ class DiscordBot(discord.Client):
 
     async def setup_hook(self):
         # Sync commands with Discord
+        # Hinweis: Beim ersten Start kann der /sync Befehl nötig sein, bevor die anderen Befehle sichtbar werden.
         await self.tree.sync()
         print("Commands synced!")
 
@@ -45,7 +65,7 @@ async def send_message(interaction: discord.Interaction, text: str):
 # Command: Kick a member
 @bot.tree.command(name="kick", description="Kicks a member from the server")
 @app_commands.describe(member="The member to kick", reason="The reason for the kick")
-@app_commands.default_permissions(kick_members=True) # Stellt sicher, dass nur Berechtigte den Befehl sehen/nutzen
+@app_commands.default_permissions(kick_members=True)
 async def kick_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
     """Kicks a member from the server (requires 'Kick Members' permission)"""
     
@@ -63,7 +83,7 @@ async def kick_member(interaction: discord.Interaction, member: discord.Member, 
 # Command: Ban a member
 @bot.tree.command(name="ban", description="Bans a member from the server")
 @app_commands.describe(member="The member to ban", reason="The reason for the ban")
-@app_commands.default_permissions(ban_members=True) # Stellt sicher, dass nur Berechtigte den Befehl sehen/nutzen
+@app_commands.default_permissions(ban_members=True)
 async def ban_member(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided."):
     """Bans a member from the server (requires 'Ban Members' permission)"""
     
@@ -95,7 +115,7 @@ async def spam_message(interaction: discord.Interaction, text: str, count: app_c
     await interaction.channel.send("✅ Spam-Befehl abgeschlossen.")
 
 
-# Command: Send an image from URL (unverändert)
+# Command: Send an image from URL
 @bot.tree.command(name="image", description="Send an image from a URL")
 @app_commands.describe(url="The image URL to send")
 async def send_image(interaction: discord.Interaction, url: str):
@@ -108,7 +128,7 @@ async def send_image(interaction: discord.Interaction, url: str):
     embed.set_image(url=url)
     await interaction.response.send_message(embed=embed)
 
-# Command: Send a random cat picture (unverändert)
+# Command: Send a random cat picture
 @bot.tree.command(name="cat", description="Send a random cat picture")
 async def send_cat(interaction: discord.Interaction):
     """Send a random cat picture from an API"""
@@ -135,7 +155,7 @@ async def send_cat(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching cat picture: {str(e)}")
 
-# Command: Send a random dog picture (unverändert)
+# Command: Send a random dog picture
 @bot.tree.command(name="dog", description="Send a random dog picture")
 async def send_dog(interaction: discord.Interaction):
     """Send a random dog picture from an API"""
@@ -162,7 +182,25 @@ async def send_dog(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error fetching dog picture: {str(e)}")
 
-# Run the bot (unverändert)
+# --- TEMPORÄRER SYNCHRONISATIONS-BEFEHL (Entfernen, sobald /spam sichtbar ist) ---
+@bot.tree.command(name="sync", description="Syncs all global commands immediately (Owner only).")
+async def sync_commands(interaction: discord.Interaction):
+    # BITTE ERSETZEN SIE DIES MIT IHRER EIGENEN DISCORD BENUTZER-ID (als ganze Zahl)
+    MEINE_BENUTZER_ID = IHRE_BENUTZER_ID_HIER 
+    
+    if interaction.user.id != MEINE_BENUTZER_ID: 
+        await interaction.response.send_message("❌ Nur der Bot-Besitzer kann diesen Befehl ausführen.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("⚙️ Starte manuelle Synchronisation der Slash-Befehle...", ephemeral=True)
+    
+    await bot.tree.sync() 
+    
+    await interaction.followup.send("✅ Alle Befehle wurden erfolgreich synchronisiert!", ephemeral=True)
+# --- ENDE DES TEMPORÄREN BEFEHLS ---
+
+
+# Run the bot
 if __name__ == "__main__":
     # Get token from environment variable
     token = os.getenv('DISCORD_BOT_TOKEN')
@@ -171,4 +209,8 @@ if __name__ == "__main__":
         print("Please set your Discord bot token in the Secrets tab.")
         exit(1)
     
+    # Startet den Keep-Alive-Server im Hintergrund
+    keep_alive() 
+    
+    # Startet den Discord-Bot
     bot.run(token)
